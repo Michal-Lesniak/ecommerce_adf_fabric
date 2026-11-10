@@ -1,0 +1,33 @@
+{
+  "name": "tr_landing_blob_created",
+  "properties": {
+    "description": "Storage Event Trigger — odpala pl_event_listener gdy pojawia się nowy plik *.csv w kontenerze landing/",
+    "type": "BlobEventsTrigger",
+    "typeProperties": {
+      "blobPathBeginsWith": "/landing/blobs/",
+      "blobPathEndsWith": ".csv",
+      "ignoreEmptyBlobs": false,
+      "scope": "/subscriptions/YOUR_SUBSCRIPTION_ID/resourceGroups/rg-shopmaster-dev-weu/providers/Microsoft.Storage/storageAccounts/shopmastersa",
+      "events": ["Microsoft.Storage.BlobCreated"]
+    },
+    "pipelines": [
+      {
+        "pipelineReference": {
+          "referenceName": "pl_event_listener",
+          "type": "PipelineReference"
+        },
+        "parameters": {
+          "file_path": {
+            "value": "@triggerBody().folderPath",
+            "type": "Expression"
+          },
+          "file_name": {
+            "value": "@triggerBody().fileName",
+            "type": "Expression"
+          }
+        }
+      }
+    ],
+    "runtimeState": "Started"
+  }
+}

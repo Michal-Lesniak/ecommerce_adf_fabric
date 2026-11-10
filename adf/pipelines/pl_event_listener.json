@@ -1,0 +1,191 @@
+{
+  "name": "pl_event_listener",
+  "properties": {
+    "description": "Pipeline uruchamiany przez Storage Event Trigger gdy pojawia się nowy plik CSV w landing/. Waliduje rozmiar, kopiuje do bronze, wywołuje Databricks.",
+    "parameters": {
+      "file_path": {
+        "type": "string",
+        "defaultValue": ""
+      },
+      "file_name": {
+        "type": "string",
+        "defaultValue": ""
+      }
+    },
+    "variables": {
+      "table_name": {
+        "type": "String",
+        "defaultValue": ""
+      },
+      "file_size_bytes": {
+        "type": "Integer",
+        "defaultValue": 0
+      }
+    },
+    "activities": [
+      {
+        "name": "GetFileMetadata",
+        "description": "Pobierz rozmiar pliku — odfiltruj puste pliki",
+        "type": "GetMetadata",
+        "typeProperties": {
+          "dataset": {
+            "referenceName": "ds_adls_landing_csv",
+            "type": "DatasetReference",
+            "parameters": {
+              "file_path": {
+                "value": "@pipeline().parameters.file_path",
+                "type": "Expression"
+              }
+            }
+          },
+          "fieldList": ["size", "exists", "lastModified"],
+          "storeSettings": {
+            "type": "AzureBlobFSReadSettings",
+            "recursive": false
+          }
+        }
+      },
+      {
+        "name": "SetVariableTableName",
+        "description": "Wyciągnij nazwę tabeli z nazwy pliku (shipments_20240115.csv → shipments)",
+        "type": "SetVariable",
+        "typeProperties": {
+          "variableName": "table_name",
+          "value": {
+            "value": "@split(pipeline().parameters.file_name, '_')[0]",
+            "type": "Expression"
+          }
+        },
+        "dependsOn": [
+          {
+            "activity": "GetFileMetadata",
+            "dependencyConditions": ["Succeeded"]
+          }
+        ]
+      },
+      {
+        "name": "IfFileNotEmpty",
+        "description": "Kontynuuj tylko jeśli plik ma dane (> 0 bajtów)",
+        "type": "IfCondition",
+        "typeProperties": {
+          "expression": {
+            "value": "@greater(activity('GetFileMetadata').output.size, 0)",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "CopyLandingToBronze",
+              "description": "Kopiuj CSV z landing do bronze jako Parquet (partycjonowanie po dacie)",
+              "type": "Copy",
+              "typeProperties": {
+                "source": {
+                  "type": "DelimitedTextSource",
+                  "storeSettings": {
+                    "type": "AzureBlobFSReadSettings",
+                    "recursive": false
+                  },
+                  "formatSettings": {
+                    "type": "DelimitedTextReadSettings"
+                  }
+                },
+                "sink": {
+                  "type": "ParquetSink",
+                  "storeSettings": {
+                    "type": "AzureBlobFSWriteSettings"
+                  },
+                  "formatSettings": {
+                    "type": "ParquetWriteSettings"
+                  }
+                },
+                "enableStaging": false,
+                "parallelCopies": 4,
+                "dataIntegrationUnits": 4
+              },
+              "inputs": [
+                {
+                  "referenceName": "ds_adls_landing_csv",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "file_path": {
+                      "value": "@pipeline().parameters.file_path",
+                      "type": "Expression"
+                    }
+                  }
+                }
+              ],
+              "outputs": [
+                {
+                  "referenceName": "ds_adls_bronze_parquet",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "table_name": {
+                      "value": "@variables('table_name')",
+                      "type": "Expression"
+                    },
+                    "partition_date": {
+                      "value": "@formatDateTime(utcnow(), 'yyyy/MM/dd')",
+                      "type": "Expression"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "name": "RunDatabricksAutoLoader",
+              "description": "Uruchom Auto Loader notebook w Databricks — bronze → silver MERGE",
+              "type": "DatabricksNotebook",
+              "typeProperties": {
+                "notebookPath": "/Shared/shopmaster/01_bronze_to_silver",
+                "baseParameters": {
+                  "table_name": {
+                    "value": "@variables('table_name')",
+                    "type": "Expression"
+                  },
+                  "source_path": {
+                    "value": "@concat('abfss://bronze@shopmastersa.dfs.core.windows.net/', variables('table_name'), '/', formatDateTime(utcnow(), 'yyyy/MM/dd'), '/')",
+                    "type": "Expression"
+                  }
+                }
+              },
+              "linkedServiceName": {
+                "referenceName": "ls_databricks_shopmaster",
+                "type": "LinkedServiceReference"
+              },
+              "dependsOn": [
+                {
+                  "activity": "CopyLandingToBronze",
+                  "dependencyConditions": ["Succeeded"]
+                }
+              ],
+              "policy": {
+                "timeout": "0.02:00:00",
+                "retry": 1,
+                "retryIntervalInSeconds": 60
+              }
+            }
+          ],
+          "ifFalseActivities": [
+            {
+              "name": "LogEmptyFile",
+              "description": "Pusty plik — zapisz w zmiennej, pipeline kończy się Succeeded (graceful skip)",
+              "type": "SetVariable",
+              "typeProperties": {
+                "variableName": "table_name",
+                "value": {
+                  "value": "@concat('SKIPPED_EMPTY:', pipeline().parameters.file_name)",
+                  "type": "Expression"
+                }
+              }
+            }
+          ]
+        },
+        "dependsOn": [
+          {
+            "activity": "SetVariableTableName",
+            "dependencyConditions": ["Succeeded"]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "alertEmailAddress": {
+      "type": "string",
+      "defaultValue": "twoj@email.com",
+      "metadata": {
+        "description": "Adres e-mail do wysyłania alertów o błędach pipeline'ów"
+      }
+    },
+    "adfResourceId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID Azure Data Factory, np. /subscriptions/.../providers/Microsoft.DataFactory/factories/adf-shopmaster-dev-weu"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Insights/actionGroups",
+      "apiVersion": "2023-01-01",
+      "name": "ag-shopmaster-pipeline-alerts",
+      "location": "Global",
+      "properties": {
+        "groupShortName": "shopmaster",
+        "enabled": true,
+        "emailReceivers": [
+          {
+            "name": "DataTeamEmail",
+            "emailAddress": "[parameters('alertEmailAddress')]",
+            "useCommonAlertSchema": true
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Insights/metricAlerts",
+      "apiVersion": "2018-03-01",
+      "name": "alert-adf-pipeline-failed-shopmaster",
+      "location": "Global",
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/actionGroups', 'ag-shopmaster-pipeline-alerts')]"
+      ],
+      "properties": {
+        "description": "Alert gdy pipeline ADF shopmaster zakończy się błędem w ciągu ostatnich 5 minut",
+        "severity": 2,
+        "enabled": true,
+        "scopes": [
+          "[parameters('adfResourceId')]"
+        ],
+        "evaluationFrequency": "PT5M",
+        "windowSize": "PT5M",
+        "criteria": {
+          "odata.type": "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria",
+          "allOf": [
+            {
+              "name": "PipelineFailedRuns",
+              "metricName": "PipelineFailedRuns",
+              "metricNamespace": "Microsoft.DataFactory/factories",
+              "operator": "GreaterThan",
+              "threshold": 0,
+              "timeAggregation": "Total",
+              "criterionType": "StaticThresholdCriterion"
+            }
+          ]
+        },
+        "autoMitigate": true,
+        "actions": [
+          {
+            "actionGroupId": "[resourceId('Microsoft.Insights/actionGroups', 'ag-shopmaster-pipeline-alerts')]"
+          }
+        ]
+      }
+    }
+  ]
+}

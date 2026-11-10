@@ -1,0 +1,23 @@
+{
+  "name": "ls_databricks_shopmaster",
+  "properties": {
+    "description": "Linked Service do Databricks workspace — token z Key Vault, istniejący cluster",
+    "type": "AzureDatabricks",
+    "typeProperties": {
+      "domain": "https://adb-XXXXXXXXXXXXXXXX.XX.azuredatabricks.net",
+      "accessToken": {
+        "type": "AzureKeyVaultSecret",
+        "store": {
+          "referenceName": "ls_keyvault_shopmaster",
+          "type": "LinkedServiceReference"
+        },
+        "secretName": "databricks-token"
+      },
+      "existingClusterId": "CLUSTER_ID_HERE"
+    },
+    "connectVia": {
+      "referenceName": "AutoResolveIntegrationRuntime",
+      "type": "IntegrationRuntimeReference"
+    }
+  }
+}

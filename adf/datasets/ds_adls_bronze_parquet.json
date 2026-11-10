@@ -1,0 +1,33 @@
+{
+  "name": "ds_adls_bronze_parquet",
+  "properties": {
+    "description": "Dataset — folder Parquet w bronze. Parametry: table_name (shipments/returns), partition_date (YYYY/MM/DD).",
+    "type": "Parquet",
+    "linkedServiceName": {
+      "referenceName": "ls_adls_shopmaster",
+      "type": "LinkedServiceReference"
+    },
+    "parameters": {
+      "table_name": {
+        "type": "string",
+        "defaultValue": "shipments"
+      },
+      "partition_date": {
+        "type": "string",
+        "defaultValue": "2024/01/01"
+      }
+    },
+    "typeProperties": {
+      "location": {
+        "type": "AzureBlobFSLocation",
+        "fileSystem": "bronze",
+        "folderPath": {
+          "value": "@concat(dataset().table_name, '/', dataset().partition_date)",
+          "type": "Expression"
+        }
+      },
+      "compressionCodec": "snappy"
+    },
+    "schema": []
+  }
+}

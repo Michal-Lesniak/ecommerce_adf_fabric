@@ -1,0 +1,21 @@
+{
+  "name": "ls_postgres_shopmaster",
+  "properties": {
+    "description": "Linked Service do bazy PostgreSQL ShopMaster — connection string pobierany z Key Vault",
+    "type": "AzurePostgreSql",
+    "typeProperties": {
+      "connectionString": {
+        "type": "AzureKeyVaultSecret",
+        "store": {
+          "referenceName": "ls_keyvault_shopmaster",
+          "type": "LinkedServiceReference"
+        },
+        "secretName": "pg-connection-string"
+      }
+    },
+    "connectVia": {
+      "referenceName": "AutoResolveIntegrationRuntime",
+      "type": "IntegrationRuntimeReference"
+    }
+  }
+}

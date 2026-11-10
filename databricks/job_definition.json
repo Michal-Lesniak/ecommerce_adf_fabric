@@ -1,0 +1,49 @@
+{
+  "name": "shopmaster_bronze_to_silver",
+  "description": "Job procesujący pliki z bronze do silver — uruchamiany przez ADF Databricks Activity lub ręcznie",
+  "tasks": [
+    {
+      "task_key": "silver_shipments",
+      "description": "Auto Loader: bronze/shipments → silver.shipments (MERGE INTO)",
+      "notebook_task": {
+        "notebook_path": "/Shared/shopmaster/01_bronze_to_silver_shipments",
+        "base_parameters": {
+          "table_name": "shipments"
+        },
+        "source": "WORKSPACE"
+      },
+      "existing_cluster_id": "CLUSTER_ID_HERE",
+      "timeout_seconds": 3600,
+      "max_retries": 1,
+      "min_retry_interval_millis": 60000
+    },
+    {
+      "task_key": "silver_returns",
+      "description": "Auto Loader: bronze/returns → silver.returns (MERGE INTO)",
+      "depends_on": [
+        {
+          "task_key": "silver_shipments"
+        }
+      ],
+      "notebook_task": {
+        "notebook_path": "/Shared/shopmaster/02_bronze_to_silver_returns",
+        "base_parameters": {
+          "table_name": "returns"
+        },
+        "source": "WORKSPACE"
+      },
+      "existing_cluster_id": "CLUSTER_ID_HERE",
+      "timeout_seconds": 3600,
+      "max_retries": 1,
+      "min_retry_interval_millis": 60000
+    }
+  ],
+  "job_clusters": [],
+  "tags": {
+    "project": "shopmaster",
+    "env": "dev",
+    "course": "bootcamp-de-m8"
+  },
+  "max_concurrent_runs": 1,
+  "format": "MULTI_TASK"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "ls_keyvault_shopmaster",
+  "properties": {
+    "description": "Linked Service do Azure Key Vault — uwierzytelnienie przez System-Assigned Managed Identity",
+    "type": "AzureKeyVault",
+    "typeProperties": {
+      "baseUrl": "https://kv-shopmaster-dev.vault.azure.net/"
+    }
+  }
+}

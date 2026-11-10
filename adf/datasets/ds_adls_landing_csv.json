@@ -1,0 +1,34 @@
+{
+  "name": "ds_adls_landing_csv",
+  "properties": {
+    "description": "Dataset — pliki CSV w landing zone. Parametr file_path pozwala wskazać konkretny plik z event triggera.",
+    "type": "DelimitedText",
+    "linkedServiceName": {
+      "referenceName": "ls_adls_shopmaster",
+      "type": "LinkedServiceReference"
+    },
+    "parameters": {
+      "file_path": {
+        "type": "string",
+        "defaultValue": "landing/"
+      }
+    },
+    "typeProperties": {
+      "location": {
+        "type": "AzureBlobFSLocation",
+        "fileSystem": "landing",
+        "folderPath": {
+          "value": "@dataset().file_path",
+          "type": "Expression"
+        }
+      },
+      "columnDelimiter": ",",
+      "rowDelimiter": "\n",
+      "escapeChar": "\\",
+      "quoteChar": "\"",
+      "firstRowAsHeader": true,
+      "compressionCodec": "none"
+    },
+    "schema": []
+  }
+}

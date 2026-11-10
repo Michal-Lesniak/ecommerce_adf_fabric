@@ -1,0 +1,22 @@
+{
+  "name": "ls_adls_shopmaster",
+  "properties": {
+    "description": "Linked Service do ADLS Gen2 shopmastersa — uwierzytelnienie przez Managed Identity ADF",
+    "type": "AzureBlobFS",
+    "typeProperties": {
+      "url": "https://shopmastersa.dfs.core.windows.net/",
+      "accountKey": {
+        "type": "AzureKeyVaultSecret",
+        "store": {
+          "referenceName": "ls_keyvault_shopmaster",
+          "type": "LinkedServiceReference"
+        },
+        "secretName": "adls-account-key"
+      }
+    },
+    "connectVia": {
+      "referenceName": "AutoResolveIntegrationRuntime",
+      "type": "IntegrationRuntimeReference"
+    }
+  }
+}

@@ -1,0 +1,177 @@
+{
+  "name": "pl_validate_and_move",
+  "properties": {
+    "description": "Child pipeline — walidacja pliku CSV w landing i kopia do bronze jako Parquet. Wywoływany przez pl_event_listener.",
+    "parameters": {
+      "file_path": {
+        "type": "string",
+        "defaultValue": ""
+      },
+      "file_name": {
+        "type": "string",
+        "defaultValue": ""
+      },
+      "table_name": {
+        "type": "string",
+        "defaultValue": ""
+      }
+    },
+    "variables": {
+      "partition_date": {
+        "type": "String",
+        "defaultValue": ""
+      },
+      "validation_result": {
+        "type": "String",
+        "defaultValue": "PENDING"
+      }
+    },
+    "activities": [
+      {
+        "name": "GetFileMetadata",
+        "description": "Pobierz rozmiar, exists, lastModified — podstawa walidacji",
+        "type": "GetMetadata",
+        "typeProperties": {
+          "dataset": {
+            "referenceName": "ds_adls_landing_csv",
+            "type": "DatasetReference",
+            "parameters": {
+              "file_path": {
+                "value": "@pipeline().parameters.file_path",
+                "type": "Expression"
+              }
+            }
+          },
+          "fieldList": ["size", "exists", "lastModified", "itemName"],
+          "storeSettings": {
+            "type": "AzureBlobFSReadSettings",
+            "recursive": false
+          }
+        }
+      },
+      {
+        "name": "SetPartitionDate",
+        "description": "Partition date = dzisiejszy dzień UTC (format yyyy/MM/dd)",
+        "type": "SetVariable",
+        "typeProperties": {
+          "variableName": "partition_date",
+          "value": {
+            "value": "@formatDateTime(utcnow(), 'yyyy/MM/dd')",
+            "type": "Expression"
+          }
+        },
+        "dependsOn": [
+          {
+            "activity": "GetFileMetadata",
+            "dependencyConditions": ["Succeeded"]
+          }
+        ]
+      },
+      {
+        "name": "ValidateFile",
+        "description": "Walidacja: plik istnieje, size > 0, nazwa pasuje do oczekiwanego table_name",
+        "type": "IfCondition",
+        "typeProperties": {
+          "expression": {
+            "value": "@and(and(equals(activity('GetFileMetadata').output.exists, true), greater(activity('GetFileMetadata').output.size, 0)), startswith(pipeline().parameters.file_name, pipeline().parameters.table_name))",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "SetValidationOk",
+              "type": "SetVariable",
+              "typeProperties": {
+                "variableName": "validation_result",
+                "value": "OK"
+              }
+            },
+            {
+              "name": "CopyLandingToBronze",
+              "description": "CSV landing → Parquet bronze z partycjonowaniem po dacie",
+              "type": "Copy",
+              "typeProperties": {
+                "source": {
+                  "type": "DelimitedTextSource",
+                  "storeSettings": {
+                    "type": "AzureBlobFSReadSettings",
+                    "recursive": false
+                  },
+                  "formatSettings": {
+                    "type": "DelimitedTextReadSettings"
+                  }
+                },
+                "sink": {
+                  "type": "ParquetSink",
+                  "storeSettings": {
+                    "type": "AzureBlobFSWriteSettings"
+                  },
+                  "formatSettings": {
+                    "type": "ParquetWriteSettings"
+                  }
+                },
+                "enableStaging": false,
+                "parallelCopies": 4,
+                "dataIntegrationUnits": 4,
+                "validateDataConsistency": true
+              },
+              "inputs": [
+                {
+                  "referenceName": "ds_adls_landing_csv",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "file_path": {
+                      "value": "@pipeline().parameters.file_path",
+                      "type": "Expression"
+                    }
+                  }
+                }
+              ],
+              "outputs": [
+                {
+                  "referenceName": "ds_adls_bronze_parquet",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "table_name": {
+                      "value": "@pipeline().parameters.table_name",
+                      "type": "Expression"
+                    },
+                    "partition_date": {
+                      "value": "@variables('partition_date')",
+                      "type": "Expression"
+                    }
+                  }
+                }
+              ],
+              "dependsOn": [
+                {
+                  "activity": "SetValidationOk",
+                  "dependencyConditions": ["Succeeded"]
+                }
+              ]
+            }
+          ],
+          "ifFalseActivities": [
+            {
+              "name": "SetValidationSkipped",
+              "description": "Pusty / nieznany plik — graceful skip, pipeline Succeeded z wynikiem SKIPPED",
+              "type": "SetVariable",
+              "typeProperties": {
+                "variableName": "validation_result",
+                "value": {
+                  "value": "@concat('SKIPPED:', pipeline().parameters.file_name)",
+                  "type": "Expression"
+                }
+              }
+            }
+          ]
+        },
+        "dependsOn": [
+          {
+            "activity": "SetPartitionDate",
+            "dependencyConditions": ["Succeeded"]
+          }
+        ]
+      }
+    ]
+  }
+}

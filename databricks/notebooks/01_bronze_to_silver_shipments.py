@@ -1,74 +1,73 @@
 # =============================================================================
 # Zadanie zaliczeniowe M8 — przykładowe rozwiązanie
 # Plik: 01_bronze_to_silver_shipments.py
-# Cel: Auto Loader bronze Parquet → Delta silver.shipments (MERGE INTO)
+# Cel: Przyrostowe ładowanie bronze Parquet → Delta silver.shipments (MERGE INTO)
+#      z watermarkiem przekazywanym z pipeline ADF (etl_watermarks.last_loaded_at).
 # Wymagania: Databricks Runtime 13.3+, ADLS Gen2 dostępny
+#
+# Idempotentność: notebook czyta tylko wiersze gdzie _ingested_at > last_watermark
+# i zwraca max(_ingested_at) przez dbutils.notebook.exit() — pipeline zapisuje tę
+# wartość do etl_watermarks przez stored procedure update_watermark.
 # =============================================================================
 
 import dbutils
 from pyspark.sql import functions as F
-from delta.tables import DeltaTable
 
-dbutils.widgets.text("file_path", "")
 dbutils.widgets.text("table_name", "shipments")
+dbutils.widgets.text("storage_account", "shopmastersa")
+dbutils.widgets.text("last_watermark", "1900-01-01 00:00:00")
 
-table_name = dbutils.widgets.get("table_name")
+table_name      = dbutils.widgets.get("table_name")
+storage_account = dbutils.widgets.get("storage_account")
+last_watermark  = dbutils.widgets.get("last_watermark")
 
-STORAGE       = "shopmastersa"
-BRONZE_PATH   = f"abfss://bronze@{STORAGE}.dfs.core.windows.net/{table_name}/"
-SILVER_TABLE  = f"silver.{table_name}"
-CHECKPOINT    = f"abfss://checkpoints@{STORAGE}.dfs.core.windows.net/{table_name}_silver/"
-SCHEMA_PATH   = f"abfss://checkpoints@{STORAGE}.dfs.core.windows.net/{table_name}_schema/"
+BRONZE_PATH  = f"abfss://bronze@{storage_account}.dfs.core.windows.net/{table_name}/"
+SILVER_TABLE = f"silver.{table_name}"
 
 print(f"Processing: {BRONZE_PATH} → {SILVER_TABLE}")
+print(f"Last watermark: {last_watermark}")
 
-# Auto Loader — incremental read z bronze
-df_stream = (
-    spark.readStream
-      .format("cloudFiles")
-      .option("cloudFiles.format", "parquet")
-      .option("cloudFiles.schemaLocation", SCHEMA_PATH)
-      .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-      .option("cloudFiles.inferColumnTypes", "true")
+df = (
+    spark.read
+      .format("parquet")
       .load(BRONZE_PATH)
+      .withColumn("_ingested_at", F.current_timestamp())
+      .filter(F.col("_ingested_at") > F.lit(last_watermark).cast("timestamp"))
       .withColumn("carrier", F.upper(F.trim(F.col("carrier"))))
       .withColumn("status", F.lower(F.trim(F.col("status"))))
       .withColumn("_processed_at", F.current_timestamp())
 )
 
-# MERGE INTO silver — deduplication na shipment_id
-def merge_shipments(batch_df, batch_id):
-    batch_df.createOrReplaceTempView("batch_shipments")
+row_count = df.count()
+print(f"  Wierszy > watermark: {row_count:,}")
 
-    if spark.catalog.tableExists(SILVER_TABLE):
-        spark.sql(f"""
-            MERGE INTO {SILVER_TABLE} AS target
-            USING batch_shipments AS source
-            ON target.shipment_id = source.shipment_id
-            WHEN MATCHED THEN UPDATE SET *
-            WHEN NOT MATCHED THEN INSERT *
-        """)
-    else:
-        batch_df.write.format("delta").saveAsTable(SILVER_TABLE)
+if row_count == 0:
+    print("  Brak nowych danych — watermark bez zmian")
+    dbutils.notebook.exit(last_watermark)
 
-    count = spark.table(SILVER_TABLE).count()
-    print(f"  Batch {batch_id}: silver.{table_name} = {count:,} wierszy")
+new_watermark = df.agg(F.max("_processed_at")).first()[0]
 
-(
-    df_stream.writeStream
-      .foreachBatch(merge_shipments)
-      .option("checkpointLocation", CHECKPOINT)
-      .trigger(availableNow=True)
-      .start()
-      .awaitTermination()
-)
+df.createOrReplaceTempView("batch_shipments")
 
-print(f"✅ silver.{table_name}: {spark.table(SILVER_TABLE).count():,} wierszy")
+if spark.catalog.tableExists(SILVER_TABLE):
+    spark.sql(f"""
+        MERGE INTO {SILVER_TABLE} AS target
+        USING batch_shipments AS source
+        ON target.shipment_id = source.shipment_id
+        WHEN MATCHED THEN UPDATE SET *
+        WHEN NOT MATCHED THEN INSERT *
+    """)
+else:
+    df.write.format("delta").saveAsTable(SILVER_TABLE)
 
-# Weryfikacja: statystyki
+total = spark.table(SILVER_TABLE).count()
+print(f"OK silver.{table_name}: {total:,} wierszy (nowy watermark: {new_watermark})")
+
 spark.sql(f"""
     SELECT carrier, status, COUNT(*) as cnt, ROUND(SUM(cost_pln),2) as total_cost
     FROM {SILVER_TABLE}
     GROUP BY carrier, status
     ORDER BY carrier, cnt DESC
 """).show()
+
+dbutils.notebook.exit(str(new_watermark))

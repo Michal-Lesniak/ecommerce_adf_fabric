@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Secrets / credentials — NIGDY nie commitować
+*.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials.json
+service-account*.json
+secrets/
+local.settings.json
+
+# Azure / Databricks / Terraform local state
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform.lock.hcl
+.databricks/
+databricks.yml.local
+
+# ADF local artifacts
+publish/
+arm_template/
+adf_publish/
+
+# Jupyter / Databricks notebook checkpoints
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Logs i tmp
+*.log
+*.tmp
+tmp/
+logs/

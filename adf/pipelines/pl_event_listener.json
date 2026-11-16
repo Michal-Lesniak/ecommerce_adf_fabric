@@ -1,7 +1,7 @@
 {
   "name": "pl_event_listener",
   "properties": {
-    "description": "Pipeline uruchamiany przez Storage Event Trigger gdy pojawia się nowy plik CSV w landing/. Waliduje rozmiar, kopiuje do bronze, wywołuje Databricks.",
+    "description": "Orchestrator pipeline uruchamiany przez Storage Event Trigger. Wyciąga table_name z nazwy pliku, delegate do pl_validate_and_move, potem pl_incremental_load tylko dla tej tabeli.",
     "parameters": {
       "file_path": {
         "type": "string",
@@ -16,35 +16,9 @@
       "table_name": {
         "type": "String",
         "defaultValue": ""
-      },
-      "file_size_bytes": {
-        "type": "Integer",
-        "defaultValue": 0
       }
     },
     "activities": [
-      {
-        "name": "GetFileMetadata",
-        "description": "Pobierz rozmiar pliku — odfiltruj puste pliki",
-        "type": "GetMetadata",
-        "typeProperties": {
-          "dataset": {
-            "referenceName": "ds_adls_landing_csv",
-            "type": "DatasetReference",
-            "parameters": {
-              "file_path": {
-                "value": "@pipeline().parameters.file_path",
-                "type": "Expression"
-              }
-            }
-          },
-          "fieldList": ["size", "exists", "lastModified"],
-          "storeSettings": {
-            "type": "AzureBlobFSReadSettings",
-            "recursive": false
-          }
-        }
-      },
       {
         "name": "SetVariableTableName",
         "description": "Wyciągnij nazwę tabeli z nazwy pliku (shipments_20240115.csv → shipments)",
@@ -55,133 +29,60 @@
             "value": "@split(pipeline().parameters.file_name, '_')[0]",
             "type": "Expression"
           }
+        }
+      },
+      {
+        "name": "ExecuteValidateAndMove",
+        "description": "Walidacja pliku i kopia landing → bronze",
+        "type": "ExecutePipeline",
+        "typeProperties": {
+          "pipeline": {
+            "referenceName": "pl_validate_and_move",
+            "type": "PipelineReference"
+          },
+          "waitOnCompletion": true,
+          "parameters": {
+            "file_path": {
+              "value": "@pipeline().parameters.file_path",
+              "type": "Expression"
+            },
+            "file_name": {
+              "value": "@pipeline().parameters.file_name",
+              "type": "Expression"
+            },
+            "table_name": {
+              "value": "@variables('table_name')",
+              "type": "Expression"
+            }
+          }
         },
         "dependsOn": [
           {
-            "activity": "GetFileMetadata",
+            "activity": "SetVariableTableName",
             "dependencyConditions": ["Succeeded"]
           }
         ]
       },
       {
-        "name": "IfFileNotEmpty",
-        "description": "Kontynuuj tylko jeśli plik ma dane (> 0 bajtów)",
-        "type": "IfCondition",
+        "name": "ExecuteIncrementalLoad",
+        "description": "Przyrostowe ładowanie bronze → silver z watermarkiem (tylko dla aktualnej tabeli)",
+        "type": "ExecutePipeline",
         "typeProperties": {
-          "expression": {
-            "value": "@greater(activity('GetFileMetadata').output.size, 0)",
-            "type": "Expression"
+          "pipeline": {
+            "referenceName": "pl_incremental_load",
+            "type": "PipelineReference"
           },
-          "ifTrueActivities": [
-            {
-              "name": "CopyLandingToBronze",
-              "description": "Kopiuj CSV z landing do bronze jako Parquet (partycjonowanie po dacie)",
-              "type": "Copy",
-              "typeProperties": {
-                "source": {
-                  "type": "DelimitedTextSource",
-                  "storeSettings": {
-                    "type": "AzureBlobFSReadSettings",
-                    "recursive": false
-                  },
-                  "formatSettings": {
-                    "type": "DelimitedTextReadSettings"
-                  }
-                },
-                "sink": {
-                  "type": "ParquetSink",
-                  "storeSettings": {
-                    "type": "AzureBlobFSWriteSettings"
-                  },
-                  "formatSettings": {
-                    "type": "ParquetWriteSettings"
-                  }
-                },
-                "enableStaging": false,
-                "parallelCopies": 4,
-                "dataIntegrationUnits": 4
-              },
-              "inputs": [
-                {
-                  "referenceName": "ds_adls_landing_csv",
-                  "type": "DatasetReference",
-                  "parameters": {
-                    "file_path": {
-                      "value": "@pipeline().parameters.file_path",
-                      "type": "Expression"
-                    }
-                  }
-                }
-              ],
-              "outputs": [
-                {
-                  "referenceName": "ds_adls_bronze_parquet",
-                  "type": "DatasetReference",
-                  "parameters": {
-                    "table_name": {
-                      "value": "@variables('table_name')",
-                      "type": "Expression"
-                    },
-                    "partition_date": {
-                      "value": "@formatDateTime(utcnow(), 'yyyy/MM/dd')",
-                      "type": "Expression"
-                    }
-                  }
-                }
-              ]
-            },
-            {
-              "name": "RunDatabricksAutoLoader",
-              "description": "Uruchom Auto Loader notebook w Databricks — bronze → silver MERGE",
-              "type": "DatabricksNotebook",
-              "typeProperties": {
-                "notebookPath": "/Shared/shopmaster/01_bronze_to_silver",
-                "baseParameters": {
-                  "table_name": {
-                    "value": "@variables('table_name')",
-                    "type": "Expression"
-                  },
-                  "source_path": {
-                    "value": "@concat('abfss://bronze@shopmastersa.dfs.core.windows.net/', variables('table_name'), '/', formatDateTime(utcnow(), 'yyyy/MM/dd'), '/')",
-                    "type": "Expression"
-                  }
-                }
-              },
-              "linkedServiceName": {
-                "referenceName": "ls_databricks_shopmaster",
-                "type": "LinkedServiceReference"
-              },
-              "dependsOn": [
-                {
-                  "activity": "CopyLandingToBronze",
-                  "dependencyConditions": ["Succeeded"]
-                }
-              ],
-              "policy": {
-                "timeout": "0.02:00:00",
-                "retry": 1,
-                "retryIntervalInSeconds": 60
-              }
+          "waitOnCompletion": true,
+          "parameters": {
+            "tables": {
+              "value": "@createArray(variables('table_name'))",
+              "type": "Expression"
             }
-          ],
-          "ifFalseActivities": [
-            {
-              "name": "LogEmptyFile",
-              "description": "Pusty plik — zapisz w zmiennej, pipeline kończy się Succeeded (graceful skip)",
-              "type": "SetVariable",
-              "typeProperties": {
-                "variableName": "table_name",
-                "value": {
-                  "value": "@concat('SKIPPED_EMPTY:', pipeline().parameters.file_name)",
-                  "type": "Expression"
-                }
-              }
-            }
-          ]
+          }
         },
         "dependsOn": [
           {
-            "activity": "SetVariableTableName",
+            "activity": "ExecuteValidateAndMove",
             "dependencyConditions": ["Succeeded"]
           }
         ]

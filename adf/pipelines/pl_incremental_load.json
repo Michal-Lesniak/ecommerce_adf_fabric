@@ -1,0 +1,121 @@
+{
+  "name": "pl_incremental_load",
+  "properties": {
+    "description": "Scheduled incremental load z watermark pattern. ForEach(tabele) → Lookup watermark → Databricks notebook (bronze>watermark → silver MERGE) → Script update_watermark na PostgreSQL. Idempotentne: drugi run nie przetworzy tych samych plików.",
+    "parameters": {
+      "tables": {
+        "type": "Array",
+        "defaultValue": ["shipments", "returns"]
+      }
+    },
+    "activities": [
+      {
+        "name": "ForEachTable",
+        "description": "Iteruj po tabelach (shipments, returns) — każda ma własny watermark",
+        "type": "ForEach",
+        "typeProperties": {
+          "items": {
+            "value": "@pipeline().parameters.tables",
+            "type": "Expression"
+          },
+          "isSequential": false,
+          "batchCount": 2,
+          "activities": [
+            {
+              "name": "LookupWatermark",
+              "description": "Pobierz last_loaded_at dla aktualnej tabeli z etl_watermarks",
+              "type": "Lookup",
+              "typeProperties": {
+                "source": {
+                  "type": "AzurePostgreSqlSource",
+                  "query": {
+                    "value": "@concat('SELECT last_loaded_at FROM ', pipeline().globalParameters.watermarkTable, ' WHERE table_name = ''', item(), '''')",
+                    "type": "Expression"
+                  }
+                },
+                "dataset": {
+                  "referenceName": "ds_postgres_watermarks",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "table_name": {
+                      "value": "@pipeline().globalParameters.watermarkTable",
+                      "type": "Expression"
+                    }
+                  }
+                },
+                "firstRowOnly": true
+              }
+            },
+            {
+              "name": "RunIncrementalNotebook",
+              "description": "Databricks notebook — czyta bronze > last_watermark, MERGE do silver, zwraca max(_processed_at)",
+              "type": "DatabricksNotebook",
+              "typeProperties": {
+                "notebookPath": {
+                  "value": "@concat(pipeline().globalParameters.databricksNotebookBasePath, '/0', if(equals(item(),'shipments'),'1','2'), '_bronze_to_silver_', item())",
+                  "type": "Expression"
+                },
+                "baseParameters": {
+                  "table_name": {
+                    "value": "@item()",
+                    "type": "Expression"
+                  },
+                  "storage_account": {
+                    "value": "@pipeline().globalParameters.storageAccountName",
+                    "type": "Expression"
+                  },
+                  "last_watermark": {
+                    "value": "@formatDateTime(activity('LookupWatermark').output.firstRow.last_loaded_at, 'yyyy-MM-dd HH:mm:ss')",
+                    "type": "Expression"
+                  }
+                }
+              },
+              "linkedServiceName": {
+                "referenceName": "ls_databricks_shopmaster",
+                "type": "LinkedServiceReference"
+              },
+              "dependsOn": [
+                {
+                  "activity": "LookupWatermark",
+                  "dependencyConditions": ["Succeeded"]
+                }
+              ],
+              "policy": {
+                "timeout": "0.02:00:00",
+                "retry": 1,
+                "retryIntervalInSeconds": 60
+              }
+            },
+            {
+              "name": "UpdateWatermark",
+              "description": "Wywołaj PostgreSQL stored procedure update_watermark z nową wartością zwróconą przez notebook",
+              "type": "Script",
+              "linkedServiceName": {
+                "referenceName": "ls_postgres_shopmaster",
+                "type": "LinkedServiceReference"
+              },
+              "typeProperties": {
+                "scripts": [
+                  {
+                    "type": "NonQuery",
+                    "text": {
+                      "value": "@concat('CALL update_watermark(''', item(), ''', ''', activity('RunIncrementalNotebook').output.runOutput, '''::timestamp)')",
+                      "type": "Expression"
+                    }
+                  }
+                ],
+                "scriptBlockExecutionTimeout": "00:05:00"
+              },
+              "dependsOn": [
+                {
+                  "activity": "RunIncrementalNotebook",
+                  "dependencyConditions": ["Succeeded"]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

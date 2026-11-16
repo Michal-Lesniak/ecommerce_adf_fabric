@@ -1,0 +1,36 @@
+{
+  "name": "shopmaster-global-parameters",
+  "properties": {
+    "description": "Global Parameters dla środowiska ShopMaster — używane we wszystkich pipeline'ach zamiast hardcoded wartości. Przełączenie dev/stg/prod wymaga tylko podmiany tego pliku (ARM parametrization).",
+    "globalParameters": {
+      "storageAccountName": {
+        "type": "String",
+        "value": "shopmastersa"
+      },
+      "landingContainer": {
+        "type": "String",
+        "value": "landing"
+      },
+      "bronzeContainer": {
+        "type": "String",
+        "value": "bronze"
+      },
+      "silverContainer": {
+        "type": "String",
+        "value": "silver"
+      },
+      "checkpointsContainer": {
+        "type": "String",
+        "value": "checkpoints"
+      },
+      "databricksNotebookBasePath": {
+        "type": "String",
+        "value": "/Shared/shopmaster"
+      },
+      "watermarkTable": {
+        "type": "String",
+        "value": "etl_watermarks"
+      }
+    }
+  }
+}
